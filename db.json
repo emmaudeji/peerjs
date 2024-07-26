@@ -1,0 +1,28 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "peerId": "98fad543-cf08-4b69-882b-8d1663cca30e",
+      "balance": 100,
+      "name": "User-1"
+    },
+    {
+      "id": 1,
+      "peerId": "98fad543-cf08-4b69-882b-8d1663cca30e",
+      "balance": 100,
+      "name": "User-1"
+    },
+    {
+      "id": 3,
+      "peerId": "8f9c1225-baa9-4c1a-b4b1-9f0c31e121d2",
+      "balance": 100,
+      "name": "User-3"
+    },
+    {
+      "id": 3,
+      "peerId": "8f9c1225-baa9-4c1a-b4b1-9f0c31e121d2",
+      "balance": 100,
+      "name": "User-3"
+    }
+  ]
+}
