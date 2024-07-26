@@ -28,7 +28,7 @@ const VideoChat = () => {
 
 console.log('===================')
 
-  const initializeUser = async () => {
+const initializeUser = async () => {
     console.log('INITIALIZING CALL');
     
     // Retrieve the user from localStorage
@@ -57,7 +57,17 @@ console.log('===================')
                   }));
                   setCurrentUser(updatedUserRes);
               });
-            } 
+            } else {
+              console.log('user does not exist in table, creating new user');
+              peer.on('open', async (id) => {
+                  const newUser = { peerId: id, balance: 10000, name: `User-${id.toString().slice(3,6)}` };
+                  const addedUser = await addUser(newUser);
+                  localStorage.setItem('user', JSON.stringify(addedUser));
+                  setPeerId(id);
+                  setUsers([...data, addedUser]);
+                  setCurrentUser(addedUser);
+              });
+          }
         } else {
             console.log('No user found in localStorage, creating new user');
             peer.on('open', async (id) => {
@@ -78,21 +88,26 @@ useEffect(() => {
   initializeUser();
   // Subscribe to changes
   
-  // const payload = subscribeToChanges()
-  //   // console.log('Change received!', payload)
-  //   if (payload.eventType === 'INSERT') {
-  //     setUsers(prevUsers => [...prevUsers, payload.new])
-  //   } else if (payload.eventType === 'UPDATE') {
-  //     setUsers(prevUsers => prevUsers.map(user => user.id === payload.new.id ? payload.new : user))
-  //   } else if (payload.eventType === 'DELETE') {
-  //     setUsers(prevUsers => prevUsers.filter(user => user.id !== payload.old.id))
-  //   }
-  
-  
-  // Cleanup subscription on unmount
-  // return () => {
-  //   supabase.removeSubscription(subscription)
-  // }
+  const subscription = supabase.channel('peers')
+  .on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'peers' },
+    (payload) => {
+        console.log('Change received!', payload)
+      if (payload.eventType === 'INSERT') {
+        setUsers(prevUsers => [...prevUsers, payload.new])
+      } else if (payload.eventType === 'UPDATE') {
+        setUsers(prevUsers => prevUsers.map(user => user.id === payload.new.id ? payload.new : user))
+      } else if (payload.eventType === 'DELETE') {
+        setUsers(prevUsers => prevUsers.filter(user => user.id !== payload.old.id))
+      }
+    }
+  )
+  .subscribe()
+
+  return ()=>{
+    supabase.removeChannel(subscription)
+  }
 }, [])
 
 useEffect(() => {
@@ -243,6 +258,7 @@ const refreshList = async ()=>{
   return (
       <div className="space-y-4 p-6 flex flex-col items-center justify-center">
         <h1 className="text-2xl font-bold mb-4">chatpal</h1>
+        <p className="text-sm max-w-md text-center">If Peer ID is missing, refresh page. If data is not updated in realtime, refresh list.</p>
         <div className="space-y-2 mb-4">
           <p>Your Peer ID: {peerId}</p>
           <input
@@ -252,7 +268,7 @@ const refreshList = async ()=>{
             placeholder="Remote Peer ID"
             className="border bg-transparent border-gray-300 p-2 rounded-md w-full"
           />
-          <div className="flex justify-between flex-wrap gap-4 items-center">
+          <div className="flex justify-between   gap-4 items-center flex-wrap">
             <div className="flex space-x-2">
               <button onClick={startCall} className="px-4 py-2 bg-blue-500 text-white rounded-md">Call</button>
               <button onClick={endCall} className="px-4 py-2 bg-red-500 text-white rounded-md">End Call</button>
@@ -271,13 +287,13 @@ const refreshList = async ()=>{
             </div>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4 max-w-4xl mx-auto">
+        <div className="grid sm:grid-cols-2 gap-4 max-w-4xl mx-auto">
           <video ref={localVideoRef} autoPlay muted className="w-full border border-gray-300 rounded-md" />
           <video ref={remoteVideoRef} autoPlay className="w-full border border-gray-300 rounded-md" />
         </div>
         <div className="mt-4 flex gap-x-4 items-end justify-center w-full">
           <h2 className="text-xl font-bold ">Users List</h2>
-          <button onClick={()=>refreshList()} className='bg-gray-200 text-gray-700 text-[12px] px-3 py-2 rounded-md'>Refresh list</button>
+          <button onClick={()=>refreshList()} className='bg-gray-700 text-white text-[12px] px-3 py-2 rounded-md'>Refresh list</button>
         </div>
         <ul className="w-full flex justify-center gap-4 flex-wrap border border-gray-300 rounded-md p-4">
           {users.map((user,idx) => (

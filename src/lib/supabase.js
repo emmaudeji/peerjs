@@ -9,8 +9,20 @@ export const getUsers = async () => {
     console.log('FETCHING-ALL', error)
     throw error
   }
-  return data
+
+  // Use reduce to filter out duplicates based on peerId
+  const uniqueData = data.reduce((acc, current) => {
+    const x = acc.find(item => item.peerId === current.peerId);
+    if (!x) {
+      return acc.concat([current]);
+    } else {
+      return acc;
+    }
+  }, []);
+
+  return uniqueData;
 }
+
 // Fetch all users data
 export const getUserById = async (id) => {
     const { data, error } = await supabase
