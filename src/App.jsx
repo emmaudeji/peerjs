@@ -7,7 +7,7 @@ import VideoChat from './components/VideoChat'
 export default function App() {
   
   return (
-    <div className="min-h-screen  w-screen overflow-x-hidden flex items-center justify-center">
+    <div className="min-h-screen w-screen overflow-x-hidden ">
     <VideoChat />
     {/* <TestVideoChat/> */}
     </div>

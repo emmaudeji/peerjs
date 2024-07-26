@@ -1,10 +1,10 @@
 /* eslint-disable no-unused-vars */
 
-import  { useState, useEffect, useRef } from 'react';
+import  { useState, useEffect, useRef, useMemo } from 'react';
 import peer, { onCall,  } from '../lib/peerService';
 import User from './User';
 // import axios from 'axios';
-import { getUsers, addUser, updateUser, deleteUser, subscribeToChanges } from '../lib/supabase';
+import { getUsers, addUser, updateUser, deleteUser, subscribeToChanges, insertCharges } from '../lib/supabase';
 import { formatDuration } from '../lib/formatDuration';
 import supabase from '../utils/supabaseClient';
 
@@ -20,13 +20,11 @@ const VideoChat = () => {
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const [currentUser, setCurrentUser] = useState(null);
-  const [peerConnection, setPeerConnection] = useState(null);
   const [dataConnection, setDataConnection] = useState(null);
   const [charged, setCharged] = useState(0);
 
   let chargeRate = 2 // #2 per seconds
 
-console.log('===================')
 
 const initializeUser = async () => {
     console.log('INITIALIZING CALL');
@@ -85,17 +83,15 @@ const initializeUser = async () => {
 };
 
 useEffect(() => {
-  initializeUser();
-  // Subscribe to changes
-  
+  initializeUser()
   const subscription = supabase.channel('peers')
   .on(
     'postgres_changes',
     { event: '*', schema: 'public', table: 'peers' },
     (payload) => {
-        console.log('Change received!', payload)
+        console.log('REALTIME UPDATED')
       if (payload.eventType === 'INSERT') {
-        setUsers(prevUsers => [...prevUsers, payload.new])
+        setUsers([...users, payload.new]);
       } else if (payload.eventType === 'UPDATE') {
         setUsers(prevUsers => prevUsers.map(user => user.id === payload.new.id ? payload.new : user))
       } else if (payload.eventType === 'DELETE') {
@@ -105,76 +101,30 @@ useEffect(() => {
   )
   .subscribe()
 
+  const subscribeToCharges = supabase.channel('charges')
+  .on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'charges' },
+    (payload) => {
+        console.log('CHARGES UPDATED',payload)
+      if (payload.eventType === 'INSERT') {
+        setCall(null);
+        remoteVideoRef.current.srcObject = null;
+        localVideoRef.current.srcObject = null;
+        setCallStartTime(null);
+        setDuration(payload.new?.duration)
+        setCharged(payload.new?.charge)
+      }
+    }
+  )
+  .subscribe()
+
   return ()=>{
     supabase.removeChannel(subscription)
+    supabase.removeChannel(subscribeToCharges)
   }
 }, [])
 
-useEffect(() => {
-  peer.on('call', (incomingCall) => {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then((stream) => {
-        localVideoRef.current.srcObject = stream;
-        incomingCall.answer(stream);
-        incomingCall.on('stream', (remoteStream) => {
-          remoteVideoRef.current.srcObject = remoteStream;
-        });
-        setCall(incomingCall);
-        setCallStartTime(Date.now());
-        setRemotePeerId(incomingCall.peer);
-
-        // Establish data connection
-        const dataConn = peer.connect(incomingCall.peer);
-        dataConn.on('open', () => {
-          setDataConnection(dataConn);
-        });
-
-        dataConn.on('data', (data) => {
-          if (data === 'endCall') {
-            endCall();
-          }
-        });
-      })
-      .catch(error => console.error('Error accessing media devices.', error));
-  });
-
-  return () => {
-    if (call) call.close();
-    if (dataConnection) dataConnection.close();
-  };
-}, [call, dataConnection]);
-
-
-const startCall = () => {
-  if (remotePeerId) {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then((stream) => {
-        localVideoRef.current.srcObject = stream;
-
-        const dataConn = peer.connect(remotePeerId);
-        dataConn.on('open', () => {
-          setDataConnection(dataConn);
-          const mediaConn = peer.call(remotePeerId, stream);
-          mediaConn.on('stream', (remoteStream) => {
-            remoteVideoRef.current.srcObject = remoteStream;
-          });
-
-          setCall(mediaConn);
-          setCallStartTime(Date.now());
-          setPeerConnection(mediaConn);
-        });
-
-        dataConn.on('data', (data) => {
-          if (data === 'endCall') {
-            endCall();
-          }
-        });
-      })
-      .catch(error => console.error('Error accessing media devices.', error));
-  }
-};
-
-  
 useEffect(() => {
   let interval;
 
@@ -189,8 +139,86 @@ useEffect(() => {
   return () => clearInterval(interval); // Clean up the interval on unmount or when callStartTime changes
 }, [callStartTime, call]);
 
+useEffect(() => {
+  // Set up a listener for incoming calls
+  onCall((call) => {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+          .then((stream) => {
+              localVideoRef.current.srcObject = stream;
+              call.answer(stream);
+              call.on('stream', (remoteStream) => {
+                  // console.log('STREAMING');
+                  remoteVideoRef.current.srcObject = remoteStream;
+              });
+              setCall(call);
+              setCallStartTime(Date.now());
+              setRemotePeerId(call.peer); // Ensure remotePeerId is set
+
+              const dataConnection = call.peer.connect(call.peer); // Establish data connection
+              dataConnection.on('open', () => {
+                // console.log('ESTABLISHED DATACONNECTION');
+                  setDataConnection(dataConnection); // Store the data connection
+              });
+
+              dataConnection.on('data', (data) => {
+                // if(!call) {console.log('Ending call',{data})}else{console.log('Startinging call',{data})}
+                  if (data === 'endCall') {
+                    console.log('Ending call with data connection',{data})
+                      // End the call if the remote peer sends the endCall message
+                      endCall();
+                  }
+              });
+          })
+        .catch(error => console.error('Error accessing media devices.', error));
+  });
+
+  return () => {
+      console.log('Component unmounted. Consider handling cleanup if necessary.');
+      if (call) {
+          call.close();
+      }
+      if (dataConnection) {
+          dataConnection.close();
+      }
+  };
+// }, [call, dataConnection]);
+}, []);
+
+const startCall = () => {
+  console.log({ remotePeerId, currentUser });
+  if (remotePeerId) {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+          .then((stream) => {
+              localVideoRef.current.srcObject = stream;
+              const mediaConnection = peer.call(remotePeerId, stream); // Ensure correct media connection setup
+              const dataConnection = peer.connect(remotePeerId); // Establish data connection
+
+              mediaConnection.on('stream', (remoteStream) => {
+                  // console.log('STREAMING');
+                  remoteVideoRef.current.srcObject = remoteStream;
+              });
+
+              dataConnection.on('open', () => {
+                  // console.log('UPDATING DATACONNECTION');
+                  setDataConnection(dataConnection); // Store the data connection
+              });
+
+              setCall(mediaConnection);
+              setCallStartTime(Date.now());
+              console.log('STREAMING ONGOING');
+          })
+          .catch(error => console.error('Error accessing media devices.', error));
+  }
+};
+
 const endCall = async () => {
   if (call) {
+    console.log('Call exists, proceeding to end the call');
+    const callEndTime = Date.now();
+    const callDuration = (callEndTime - callStartTime) / 1000; // in seconds
+    const charge = callDuration * chargeRate;
+    setCharged(charge)
+    // Send a message to the remote peer to end the call
     if (dataConnection && dataConnection.open) {
       dataConnection.send('endCall');
     }
@@ -199,20 +227,19 @@ const endCall = async () => {
     setCall(null);
     remoteVideoRef.current.srcObject = null;
     localVideoRef.current.srcObject = null;
+    setCallStartTime(null);
+    setDuration('00:00');
 
-    const callEndTime = Date.now();
-    const callDuration = (callEndTime - callStartTime) / 1000; // in seconds
-    const charge = callDuration * chargeRate;
-    setCharged(charge)
-
+    // Ensure currentUser and remotePeerId are valid
     if (!currentUser || !remotePeerId) {
       console.error('currentUser or remotePeerId is invalid');
       return;
     }
 
+    // Update balances
     const updatedCurrentUser = {
       ...currentUser,
-      balance: currentUser.balance -  Math.round(charge)
+      balance: currentUser.balance - charge
     };
 
     const remoteUser = users.find(user => user.peerId === remotePeerId);
@@ -224,24 +251,34 @@ const endCall = async () => {
 
     const updatedRemoteUser = {
       ...remoteUser,
-      balance: remoteUser.balance +  Math.round(charge)
+      balance: remoteUser.balance + charge
     };
 
     try {
       const updatedCurrentUserRes = await updateUser(currentUser.id, updatedCurrentUser);
-      const updatedRemoteUserRes = await updateUser(remoteUser.id, updatedRemoteUser);
 
+      const updatedupdatedRemoteUserRes =await updateUser(remoteUser.id, updatedRemoteUser);
+
+      const addCharges =await insertCharges({
+        charge:charge,
+        rate:chargeRate,
+        duration:callDuration,
+      });
+      console.log({addCharges})
+
+      // Update local state
       setUsers(users.map(user => 
-        user.id === currentUser.id ? updatedCurrentUserRes : 
-        user.id === remoteUser.id ? updatedRemoteUserRes : 
-        user
-      ));
+        user.id === currentUser.id ? updatedCurrentUserRes 
+        : 
+        user.id === remoteUser.id ? updatedupdatedRemoteUserRes 
+        : 
+        user)
+      );
       
       localStorage.setItem('user', JSON.stringify(updatedCurrentUserRes));
-      setCurrentUser(updatedCurrentUserRes);
 
-      // setCallStartTime(null);
-      // setDuration('00:00');
+      setCurrentUser(updatedCurrentUserRes);
+      
     } catch (error) {
       console.error('Error updating user balances:', error);
     }
@@ -250,12 +287,12 @@ const endCall = async () => {
   }
 };
 
-
 const refreshList = async ()=>{
   const data = await getUsers()
   setUsers(data)
 }
-  return (
+ 
+return (
       <div className="space-y-4 p-6 flex flex-col items-center justify-center">
         <h1 className="text-2xl font-bold mb-4">chatpal</h1>
         <p className="text-sm max-w-md text-center">If Peer ID is missing, refresh page. If data is not updated in realtime, refresh list.</p>
@@ -280,10 +317,7 @@ const refreshList = async ()=>{
                 Math.round((Date.now() - callStartTime) / 1000 * chargeRate)
                 : Math.round(charged) }
               </span>
-
               <span>Rate: ₦{chargeRate}</span>
-              
-
             </div>
           </div>
         </div>
@@ -296,7 +330,7 @@ const refreshList = async ()=>{
           <button onClick={()=>refreshList()} className='bg-gray-700 text-white text-[12px] px-3 py-2 rounded-md'>Refresh list</button>
         </div>
         <ul className="w-full flex justify-center gap-4 flex-wrap border border-gray-300 rounded-md p-4">
-          {users.map((user,idx) => (
+          {Array.isArray(users) && users?.map((user,idx) => (
             user.peerId !== peerId ? (
               <li onClick={() => setRemotePeerId(user.peerId)} key={idx} className="">
                 <User item={user} idx={idx}/>

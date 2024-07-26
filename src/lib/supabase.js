@@ -51,6 +51,20 @@ export const addUser = async (user) => {
   return data
 }
 
+
+export const insertCharges = async (charges) => {
+  const { data, error } = await supabase
+    .from('charges')
+    .insert([charges])
+    .select()
+    .single()
+  if (error) {
+    console.log('ADDING-CHARGES',error)
+    throw error
+  }
+  return data
+}
+
 // Update a user
 export const updateUser = async (id, updatedUser) => {
   const { data, error } = await supabase
